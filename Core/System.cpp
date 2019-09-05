@@ -509,6 +509,9 @@ std::string GetSysDirectory(PSPDirectories directoryType) {
 	case DIRECTORY_SAVEDATA:
 		return g_Config.memStickDirectory + "PSP/SAVEDATA/";
 	case DIRECTORY_SCREENSHOT:
+		if( !g_Config.screenshotDirectory.empty() ) {
+			return g_Config.screenshotDirectory;
+		}
 		return g_Config.memStickDirectory + "PSP/SCREENSHOT/";
 	case DIRECTORY_SYSTEM:
 		return g_Config.memStickDirectory + "PSP/SYSTEM/";

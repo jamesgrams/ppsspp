@@ -550,6 +550,8 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 				g_Config.bSaveSettings = false;
 				break;
 			case '-':
+				if (!strncmp(argv[i], "--screenshotdir=", strlen("--screenshotdir=")) && strlen(argv[i]) > strlen("--screenshotdir="))
+                                        g_Config.screenshotDirectory = argv[i] + strlen("--screenshotdir=");
 				if (!strncmp(argv[i], "--log=", strlen("--log=")) && strlen(argv[i]) > strlen("--log="))
 					fileToLog = argv[i] + strlen("--log=");
 				if (!strncmp(argv[i], "--state=", strlen("--state=")) && strlen(argv[i]) > strlen("--state="))
