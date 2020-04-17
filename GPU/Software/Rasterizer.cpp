@@ -545,7 +545,7 @@ static inline u32 ApplyLogicOp(GELogicOp op, u32 old_color, u32 new_color) {
 	return new_color;
 }
 
-static inline Vec4<int> GetTextureFunctionOutput(const Vec4<int>& prim_color, const Vec4<int>& texcolor)
+Vec4<int> GetTextureFunctionOutput(const Vec4<int>& prim_color, const Vec4<int>& texcolor)
 {
 	Vec3<int> out_rgb;
 	int out_a;
@@ -779,7 +779,8 @@ static inline Vec3<int> GetDestFactor(const Vec4<int>& source, const Vec4<int>& 
 	}
 }
 
-static inline Vec3<int> AlphaBlendingResult(const Vec4<int> &source, const Vec4<int> &dst)
+// Removed inline here - it was never chosen to be inlined by the compiler anyway, too complex.
+Vec3<int> AlphaBlendingResult(const Vec4<int> &source, const Vec4<int> &dst)
 {
 	// Note: These factors cannot go below 0, but they can go above 255 when doubling.
 	Vec3<int> srcfactor = GetSourceFactor(source, dst);
@@ -933,6 +934,10 @@ inline void DrawSinglePixel(const DrawingCoords &p, u16 z, u8 fog, const Vec4<in
 	new_color = (new_color & ~gstate.getColorMask()) | (old_color & gstate.getColorMask());
 
 	SetPixelColor(p.x, p.y, new_color);
+}
+
+void DrawSinglePixelNonClear(const DrawingCoords &p, u16 z, u8 fog, const Vec4<int> &color_in) {
+	DrawSinglePixel<false>(p, z, fog, color_in);
 }
 
 static inline void ApplyTexturing(Sampler::Funcs sampler, Vec4<int> &prim_color, float s, float t, int texlevel, int frac_texlevel, bool bilinear, u8 *texptr[], int texbufw[]) {
@@ -1434,9 +1439,9 @@ void ClearRectangle(const VertexData &v0, const VertexData &v1)
 	DrawingCoords scissorTL(gstate.getScissorX1(), gstate.getScissorY1(), 0);
 	DrawingCoords scissorBR(gstate.getScissorX2(), gstate.getScissorY2(), 0);
 	minX = std::max(minX, (int)TransformUnit::DrawingToScreen(scissorTL).x);
-	maxX = std::max(0, std::min(maxX, (int)TransformUnit::DrawingToScreen(scissorBR).x));
+	maxX = std::max(0, std::min(maxX, (int)TransformUnit::DrawingToScreen(scissorBR).x + 16));
 	minY = std::max(minY, (int)TransformUnit::DrawingToScreen(scissorTL).y);
-	maxY = std::max(0, std::min(maxY, (int)TransformUnit::DrawingToScreen(scissorBR).y));
+	maxY = std::max(0, std::min(maxY, (int)TransformUnit::DrawingToScreen(scissorBR).y + 16));
 
 	const int w = (maxX - minX) / 16;
 	if (w <= 0)

@@ -2,6 +2,7 @@
 #include "base/logging.h"
 #include "base/timeutil.h"
 #include "input/input_state.h"
+#include "ui/root.h"
 #include "ui/screen.h"
 #include "ui/ui.h"
 #include "ui/view.h"
@@ -125,6 +126,7 @@ void ScreenManager::deviceRestored() {
 }
 
 void ScreenManager::resized() {
+	ILOG("ScreenManager::resized(dp: %dx%d)", dp_xres, dp_yres);
 	std::lock_guard<std::recursive_mutex> guard(inputLock_);
 	// Have to notify the whole stack, otherwise there will be problems when going back
 	// to non-top screens.

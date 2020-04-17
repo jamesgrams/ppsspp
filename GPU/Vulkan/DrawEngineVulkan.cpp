@@ -153,6 +153,8 @@ void DrawEngineVulkan::InitDeviceObjects() {
 		frame_[i].pushUBO = new VulkanPushBuffer(vulkan_, 8 * 1024 * 1024, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
 		frame_[i].pushVertex = new VulkanPushBuffer(vulkan_, 2 * 1024 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 		frame_[i].pushIndex = new VulkanPushBuffer(vulkan_, 1 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+		frame_[i].pushLocal = new VulkanPushBuffer(vulkan_, 1 * 1024 * 1024, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	}
 
 	VkPipelineLayoutCreateInfo pl{ VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
@@ -209,6 +211,11 @@ void DrawEngineVulkan::FrameData::Destroy(VulkanContext *vulkan) {
 		delete pushIndex;
 		pushIndex = nullptr;
 	}
+	if (pushLocal) {
+		pushLocal->Destroy(vulkan);
+		delete pushLocal;
+		pushLocal = nullptr;
+	}
 }
 
 void DrawEngineVulkan::DestroyDeviceObjects() {
@@ -252,6 +259,7 @@ void DrawEngineVulkan::DeviceRestore(VulkanContext *vulkan, Draw::DrawContext *d
 }
 
 void DrawEngineVulkan::BeginFrame() {
+	// Too many issues right now to allow reuse.
 	lastPipeline_ = nullptr;
 
 	int curFrame = vulkan_->GetCurFrame();
@@ -264,10 +272,12 @@ void DrawEngineVulkan::BeginFrame() {
 	frame->pushUBO->Reset();
 	frame->pushVertex->Reset();
 	frame->pushIndex->Reset();
+	frame->pushLocal->Reset();
 
 	frame->pushUBO->Begin(vulkan_);
 	frame->pushVertex->Begin(vulkan_);
 	frame->pushIndex->Begin(vulkan_);
+	frame->pushLocal->Begin(vulkan_);
 
 	// TODO: How can we make this nicer...
 	tessDataTransferVulkan->SetPushBuffer(frame->pushUBO);
@@ -324,6 +334,7 @@ void DrawEngineVulkan::EndFrame() {
 	frame->pushUBO->End();
 	frame->pushVertex->End();
 	frame->pushIndex->End();
+	frame->pushLocal->End();
 	vertexCache_->End();
 }
 
@@ -798,13 +809,14 @@ void DrawEngineVulkan::DoFlush() {
 		}
 
 		if (!lastPipeline_ || gstate_c.IsDirty(DIRTY_BLEND_STATE | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_RASTER_STATE | DIRTY_DEPTHSTENCIL_STATE | DIRTY_VERTEXSHADER_STATE | DIRTY_FRAGMENTSHADER_STATE) || prim != lastPrim_) {
-			shaderManager_->GetShaders(prim, lastVType_, &vshader, &fshader, true);  // usehwtransform
-			_dbg_assert_msg_(G3D, vshader->UseHWTransform(), "Bad vshader");
-
 			if (prim != lastPrim_ || gstate_c.IsDirty(DIRTY_BLEND_STATE | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_RASTER_STATE | DIRTY_DEPTHSTENCIL_STATE)) {
 				ConvertStateToVulkanKey(*framebufferManager_, shaderManager_, prim, pipelineKey_, dynState_);
 			}
-			Draw::NativeObject object = g_Config.iRenderingMode != FB_NON_BUFFERED_MODE ? Draw::NativeObject::FRAMEBUFFER_RENDERPASS : Draw::NativeObject::BACKBUFFER_RENDERPASS;
+
+			shaderManager_->GetShaders(prim, lastVType_, &vshader, &fshader, true, useHWTessellation_);  // usehwtransform
+			_dbg_assert_msg_(G3D, vshader->UseHWTransform(), "Bad vshader");
+
+			Draw::NativeObject object = framebufferManager_->UseBufferedRendering() ? Draw::NativeObject::FRAMEBUFFER_RENDERPASS : Draw::NativeObject::BACKBUFFER_RENDERPASS;
 			VkRenderPass renderPass = (VkRenderPass)draw_->GetNativeObject(object);
 			VulkanPipeline *pipeline = pipelineManager_->GetOrCreatePipeline(pipelineLayout_, renderPass, pipelineKey_, &dec_->decFmt, vshader, fshader, true);
 			if (!pipeline || !pipeline->pipeline) {
@@ -829,7 +841,7 @@ void DrawEngineVulkan::DoFlush() {
 		}
 		lastPrim_ = prim;
 
-		dirtyUniforms_ |= shaderManager_->UpdateUniforms();
+		dirtyUniforms_ |= shaderManager_->UpdateUniforms(framebufferManager_->UseBufferedRendering());
 		UpdateUBOs(frame);
 
 		VkDescriptorSet ds = GetOrCreateDescriptorSet(imageView, sampler, baseBuf, lightBuf, boneBuf, tess);
@@ -879,11 +891,19 @@ void DrawEngineVulkan::DoFlush() {
 		params.transformedExpanded = transformedExpanded;
 		params.fbman = framebufferManager_;
 		params.texCache = textureCache_;
-		// We have to force drawing of primitives if g_Config.iRenderingMode == FB_NON_BUFFERED_MODE because Vulkan clears
+		// We have to force drawing of primitives if !framebufferManager_->UseBufferedRendering() because Vulkan clears
 		// do not respect scissor rects.
-		params.allowClear = g_Config.iRenderingMode != FB_NON_BUFFERED_MODE;
+		params.allowClear = framebufferManager_->UseBufferedRendering();
 		params.allowSeparateAlphaClear = false;
 		params.provokeFlatFirst = true;
+
+		// We need to update the viewport early because it's checked for flipping in SoftwareTransform.
+		// We don't have a "DrawStateEarly" in vulkan, so...
+		// TODO: Probably should eventually refactor this and feed the vp size into SoftwareTransform directly (Unknown's idea).
+		if (gstate_c.IsDirty(DIRTY_VIEWPORTSCISSOR_STATE)) {
+			gstate_c.vpWidth = gstate.getViewportXScale() * 2.0f;
+			gstate_c.vpHeight = gstate.getViewportYScale() * 2.0f;
+		}
 
 		int maxIndex = indexGen.MaxIndex();
 		SoftwareTransform(
@@ -903,12 +923,12 @@ void DrawEngineVulkan::DoFlush() {
 					sampler = nullSampler_;
 			}
 			if (!lastPipeline_ || gstate_c.IsDirty(DIRTY_BLEND_STATE | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_RASTER_STATE | DIRTY_DEPTHSTENCIL_STATE | DIRTY_VERTEXSHADER_STATE | DIRTY_FRAGMENTSHADER_STATE) || prim != lastPrim_) {
-				shaderManager_->GetShaders(prim, lastVType_, &vshader, &fshader, false);  // usehwtransform
+				shaderManager_->GetShaders(prim, lastVType_, &vshader, &fshader, false, false);  // usehwtransform
 				_dbg_assert_msg_(G3D, !vshader->UseHWTransform(), "Bad vshader");
 				if (prim != lastPrim_ || gstate_c.IsDirty(DIRTY_BLEND_STATE | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_RASTER_STATE | DIRTY_DEPTHSTENCIL_STATE)) {
 					ConvertStateToVulkanKey(*framebufferManager_, shaderManager_, prim, pipelineKey_, dynState_);
 				}
-				Draw::NativeObject object = g_Config.iRenderingMode != FB_NON_BUFFERED_MODE ? Draw::NativeObject::FRAMEBUFFER_RENDERPASS : Draw::NativeObject::BACKBUFFER_RENDERPASS;
+				Draw::NativeObject object = framebufferManager_->UseBufferedRendering() ? Draw::NativeObject::FRAMEBUFFER_RENDERPASS : Draw::NativeObject::BACKBUFFER_RENDERPASS;
 				VkRenderPass renderPass = (VkRenderPass)draw_->GetNativeObject(object);
 				VulkanPipeline *pipeline = pipelineManager_->GetOrCreatePipeline(pipelineLayout_, renderPass, pipelineKey_, &dec_->decFmt, vshader, fshader, false);
 				if (!pipeline || !pipeline->pipeline) {
@@ -933,7 +953,7 @@ void DrawEngineVulkan::DoFlush() {
 			}
 			lastPrim_ = prim;
 
-			dirtyUniforms_ |= shaderManager_->UpdateUniforms();
+			dirtyUniforms_ |= shaderManager_->UpdateUniforms(framebufferManager_->UseBufferedRendering());
 
 			// Even if the first draw is through-mode, make sure we at least have one copy of these uniforms buffered
 			UpdateUBOs(frame);
@@ -970,7 +990,7 @@ void DrawEngineVulkan::DoFlush() {
 			int scissorY2 = gstate.getScissorY2() + 1;
 			framebufferManager_->SetSafeSize(scissorX2, scissorY2);
 
-			if ((gstate_c.featureFlags & GPU_USE_CLEAR_RAM_HACK) && gstate.isClearModeColorMask() && (gstate.isClearModeAlphaMask() || gstate.FrameBufFormat() == GE_FORMAT_565)) {
+			if (gstate_c.Supports(GPU_USE_CLEAR_RAM_HACK) && gstate.isClearModeColorMask() && (gstate.isClearModeAlphaMask() || gstate.FrameBufFormat() == GE_FORMAT_565)) {
 				framebufferManager_->ApplyClearToMemory(scissorX1, scissorY1, scissorX2, scissorY2, result.color);
 			}
 		}

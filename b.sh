@@ -31,20 +31,18 @@ do
 			;;
 		--release)
 			CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release ${CMAKE_ARGS}"
-			QMAKE_ARGS="CONFIG+=release ${QMAKE_ARGS}"
 			;;
 		--debug)
 			CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Debug ${CMAKE_ARGS}"
-			QMAKE_ARGS="CONFIG+=debug ${QMAKE_ARGS}"
-			;;
-		--system-ffmpeg)
-			QMAKE_ARGS="CONFIG+=system_ffmpeg ${QMAKE_ARGS}"
 			;;
 		--headless) echo "Headless mode enabled"
 			CMAKE_ARGS="-DHEADLESS=ON ${CMAKE_ARGS}"
 			;;
 		--libretro) echo "Build Libretro core"
 			CMAKE_ARGS="-DLIBRETRO=ON ${CMAKE_ARGS}"
+			;;
+		--libretro_android) echo "Build Libretro Android core"
+		        CMAKE_ARGS="-DLIBRETRO=ON -DCMAKE_TOOLCHAIN_FILE=${NDK}/build/cmake/android.toolchain.cmake -DANDROID_ABI=${APP_ABI} ${CMAKE_ARGS}"
 			;;
 		--unittest) echo "Build unittest"
 			CMAKE_ARGS="-DUNITTEST=ON ${CMAKE_ARGS}"

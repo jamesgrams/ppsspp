@@ -31,18 +31,22 @@ import android.text.InputType;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Display;
+import android.view.DisplayCutout;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.InputDevice;
 import android.view.InputEvent;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.OrientationEventListener;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.View.OnSystemUiVisibilityChangeListener;
+import android.view.ViewGroup;
 import android.view.Window;
+import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
@@ -52,6 +56,8 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public abstract class NativeActivity extends Activity implements SurfaceHolder.Callback {
 	// Remember to loadLibrary your JNI .so in a static {} block
@@ -85,6 +91,9 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 
 	private boolean sustainedPerfSupported;
 
+	private boolean navigationHidden;
+	private View navigationCallbackView = null;
+
 	// audioFocusChangeListener to listen to changes in audio state
 	private AudioFocusChangeListener audioFocusChangeListener;
 	private AudioManager audioManager;
@@ -115,6 +124,11 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 	private float refreshRate;
 	private int pixelWidth;
 	private int pixelHeight;
+
+	private int safeInsetLeft = 0;
+	private int safeInsetRight = 0;
+	private int safeInsetTop = 0;
+	private int safeInsetBottom = 0;
 
 	private static final String[] permissionsForStorage = {
 		Manifest.permission.WRITE_EXTERNAL_STORAGE,
@@ -404,17 +418,24 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 	@SuppressLint("InlinedApi")
 	@TargetApi(Build.VERSION_CODES.ICE_CREAM_SANDWICH)
 	private void updateSystemUiVisibility() {
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+			setupSystemUiCallback();
+		}
+
+		// Compute our _desired_ systemUiVisibility
 		int flags = 0;
 		if (useLowProfileButtons()) {
 			flags |= View.SYSTEM_UI_FLAG_LOW_PROFILE;
 		}
 		if (useImmersive()) {
-			flags |= View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION;
+			flags |= View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN;
 		}
-		if (getWindow().getDecorView() != null) {
-			getWindow().getDecorView().setSystemUiVisibility(flags);
+
+		View decorView = getWindow().peekDecorView();
+		if (decorView != null) {
+			decorView.setSystemUiVisibility(flags);
 		} else {
-			Log.e(TAG, "updateSystemUiVisibility: decor view not yet created, ignoring");
+			Log.e(TAG, "updateSystemUiVisibility: decor view not yet created, ignoring for now");
 		}
 		updateDisplayMeasurements();
 	}
@@ -452,20 +473,32 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 		sz.y = NativeApp.getDesiredBackbufferHeight();
 	}
 
+	private SurfaceView getSurfaceView() {
+		if (mGLSurfaceView != null) {
+			return mGLSurfaceView;
+		} else {
+			return mSurfaceView;
+		}
+	}
+
 	@TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
 	public void updateDisplayMeasurements() {
 		Display display = getWindowManager().getDefaultDisplay();
 
+		// Early in startup, we don't have a view to query. Do our best to get some kind of size
+		// that can be used by config default heuristics, and so on.
 		DisplayMetrics metrics = new DisplayMetrics();
-		if (useImmersive() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-			if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N || !isInMultiWindowMode()) {
-				display.getRealMetrics(metrics);
-			} else {
-				// multi-window mode
-				display.getMetrics(metrics);
-			}
+		if (navigationHidden && Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+			display.getRealMetrics(metrics);
 		} else {
 			display.getMetrics(metrics);
+		}
+
+		// Later on, we have the exact pixel size so let's just use it.
+		SurfaceView view = getSurfaceView();
+		if (view != null) {
+			metrics.widthPixels = view.getWidth();
+			metrics.heightPixels = view.getHeight();
 		}
 		densityDpi = metrics.densityDpi;
 		refreshRate = display.getRefreshRate();
@@ -524,24 +557,34 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			// http://grokbase.com/t/gg/android-developers/11bj40jm4w/fall-back
 
 			// Needed to avoid banding on Ouya?
-			if (Build.MANUFACTURER == "OUYA") {
+			if (Build.MANUFACTURER.equals("OUYA")) {
 				mGLSurfaceView.getHolder().setFormat(PixelFormat.RGBX_8888);
 				mGLSurfaceView.setEGLConfigChooser(new NativeEGLConfigChooser());
 			} else {
 				// Tried to mess around with config choosers (NativeEGLConfigChooser) here but fail completely on Xperia Play.
-				// On the other hand, I think from ICS we should be safe to at least require 8888 and stencil...
-				if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
-					mGLSurfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 8);
-				}
+
+				// Then I tried to require 8888/16/8 but that backfired too, does not work on Mali 450 which is
+				// used in popular TVs and boxes like Mi Box. So we'll just get what we get, I guess...
+
+				// if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH && !Build.MANUFACTURER.equals("Amazon")) {
+					// mGLSurfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 8);
+				// }
 			}
 			mGLSurfaceView.setRenderer(nativeRenderer);
 			setContentView(mGLSurfaceView);
+
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+				mGLSurfaceView.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+					@Override
+					public WindowInsets onApplyWindowInsets(View view, WindowInsets windowInsets) {
+						checkInsets(windowInsets);
+						return windowInsets;
+					}
+				});
+			}
 		} else {
 			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
 				updateSystemUiVisibility();
-				if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-					setupSystemUiCallback();
-				}
 			}
 
 			mSurfaceView = new NativeSurfaceView(NativeActivity.this);
@@ -550,6 +593,16 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			setContentView(mSurfaceView);
 			Log.i(TAG, "setcontentview after");
 			ensureRenderLoop();
+
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+				mSurfaceView.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+					@Override
+					public WindowInsets onApplyWindowInsets(View view, WindowInsets windowInsets) {
+						checkInsets(windowInsets);
+						return windowInsets;
+					}
+				});
+			}
 		}
 	}
 
@@ -578,6 +631,7 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 		}
 
 		Log.d(TAG, "Surface created. pixelWidth=" + pixelWidth + ", pixelHeight=" + pixelHeight + " holder: " + holder.toString() + " or: " + requestedOr);
+		NativeApp.setDisplayParameters(pixelWidth, pixelHeight, (int) densityDpi, refreshRate);
 		getDesiredBackbufferSize(desiredSize);
 
 		// Note that desiredSize might be 0,0 here - but that's fine when calling setFixedSize! It means auto.
@@ -601,7 +655,9 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			return;
 		}
 		Log.w(TAG, "Surface changed. Resolution: " + width + "x" + height + " Format: " + format);
+		// The window size might have changed (immersive mode, native fullscreen on some devices)
 		NativeApp.backbufferResize(width, height, format);
+		updateDisplayMeasurements();
 		mSurface = holder.getSurface();
 		if (!javaGL) {
 			// If we got a surface, this starts the thread. If not, it doesn't.
@@ -667,14 +723,26 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 
 	@TargetApi(Build.VERSION_CODES.KITKAT)
 	void setupSystemUiCallback() {
-		getWindow().getDecorView().setOnSystemUiVisibilityChangeListener(new OnSystemUiVisibilityChangeListener() {
+		final View decorView = getWindow().peekDecorView();
+		if (decorView == null || decorView == navigationCallbackView) {
+			return;
+		}
+
+		decorView.setOnSystemUiVisibilityChangeListener(new OnSystemUiVisibilityChangeListener() {
 			@Override
 			public void onSystemUiVisibilityChange(int visibility) {
-				if (visibility == 0) {
-					updateSystemUiVisibility();
-				}
+				// Called when the system UI's visibility changes, regardless of
+				// whether it's because of our or system actions.
+				// We will try to force it to follow our preference but will not stupidly
+				// act as if it's visible if it's not.
+				navigationHidden = ((visibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) != 0);
+				// TODO: Check here if it's the state we want.
+				Log.i(TAG, "SystemUiVisibilityChange! visibility=" + visibility + " navigationHidden: " + navigationHidden);
+				Log.i(TAG, "decorView: " + decorView.getWidth() + "x" + decorView.getHeight());
+				updateDisplayMeasurements();
 			}
 		});
+		navigationCallbackView = decorView;
 	}
 
 	@Override
@@ -720,6 +788,7 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			NativeApp.shutdown();
 			initialized = false;
 		}
+		navigationCallbackView = null;
 	}
 
 	@Override
@@ -740,7 +809,9 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 				Log.e(TAG, "mGLSurfaceView really shouldn't be null in onPause");
 			}
 		}
-		mCameraHelper.pause();
+		if (mCameraHelper != null) {
+			mCameraHelper.pause();
+		}
 		Log.i(TAG, "onPause completed");
 	}
 
@@ -780,7 +851,9 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 				mSurfaceView.onResume();
 			}
 		}
-		mCameraHelper.resume();
+		if (mCameraHelper != null) {
+			mCameraHelper.resume();
+		}
 
 		gainAudioFocus(this.audioManager, this.audioFocusChangeListener);
 		NativeApp.resume();
@@ -788,6 +861,39 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 		if (!javaGL) {
 			// Restart the render loop.
 			ensureRenderLoop();
+		}
+	}
+
+	private void checkInsets(WindowInsets insets) {
+		if (insets == null) {
+			return;
+		}
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+			DisplayCutout cutout = insets.getDisplayCutout();
+			if (cutout != null) {
+				safeInsetLeft = cutout.getSafeInsetLeft();
+				safeInsetRight = cutout.getSafeInsetRight();
+				safeInsetTop = cutout.getSafeInsetTop();
+				safeInsetBottom = cutout.getSafeInsetBottom();
+				Log.i(TAG, "Safe insets: left: " + safeInsetLeft + " right: " + safeInsetRight + " top: " + safeInsetTop + " bottom: " + safeInsetBottom);
+			} else {
+				Log.i(TAG, "Cutout was null");
+				safeInsetLeft = 0;
+				safeInsetRight = 0;
+				safeInsetTop = 0;
+				safeInsetBottom = 0;
+			}
+			NativeApp.sendMessage("safe_insets", safeInsetLeft + ":" + safeInsetRight + ":" + safeInsetTop + ":" + safeInsetBottom);
+		}
+	}
+
+	@Override
+	public void onAttachedToWindow() {
+		Log.i(TAG, "onAttachedToWindow");
+		super.onAttachedToWindow();
+
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+			setupSystemUiCallback();
 		}
 	}
 
@@ -799,7 +905,7 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			updateSystemUiVisibility();
 		}
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-			densityDpi = (float) newConfig.densityDpi;
+			densityDpi = (float)newConfig.densityDpi;
 		}
 	}
 
@@ -1092,8 +1198,8 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 		return bld;
 	}
 
-	// The return value is sent elsewhere. TODO in java, in SendMessage in C++.
-	public void inputBox(final String title, String defaultText, String defaultAction) {
+	// The return value is sent to C++ via seqID.
+	public void inputBox(final String seqID, final String title, String defaultText, String defaultAction) {
 		final FrameLayout fl = new FrameLayout(this);
 		final EditText input = new EditText(this);
 		input.setGravity(Gravity.CENTER);
@@ -1125,15 +1231,22 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			.setPositiveButton(defaultAction, new DialogInterface.OnClickListener() {
 				@Override
 				public void onClick(DialogInterface d, int which) {
-					NativeApp.sendMessage("inputbox_completed", title + ":" + input.getText().toString());
+					NativeApp.sendInputBox(seqID, true, input.getText().toString());
 					d.dismiss();
 				}
 			})
 			.setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
 				@Override
 				public void onClick(DialogInterface d, int which) {
-					NativeApp.sendMessage("inputbox_failed", "");
+					NativeApp.sendInputBox(seqID, false, "");
 					d.cancel();
+				}
+			})
+			.setOnDismissListener(new DialogInterface.OnDismissListener() {
+				@Override
+				public void onDismiss(DialogInterface d) {
+					NativeApp.sendInputBox(seqID, false, "");
+					updateSystemUiVisibility();
 				}
 			})
 			.create();
@@ -1219,7 +1332,7 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			// http://developer.android.com/guide/publishing/publishing.html#marketintent
 			return false;
 		} else if (command.equals("toast")) {
-			Toast toast = Toast.makeText(this, params, Toast.LENGTH_SHORT);
+			Toast toast = Toast.makeText(this, params, Toast.LENGTH_LONG);
 			toast.show();
 			Log.i(TAG, params);
 			return true;
@@ -1234,15 +1347,17 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			inputMethodManager.toggleSoftInputFromWindow(surfView.getApplicationWindowToken(), InputMethodManager.SHOW_FORCED, 0);
 			return true;
 		} else if (command.equals("inputbox")) {
+			String seqID = "";
 			String title = "Input";
 			String defString = "";
-			String[] param = params.split(":");
-			if (param[0].length() > 0)
-				title = param[0];
-			if (param.length > 1)
-				defString = param[1];
-			Log.i(TAG, "Launching inputbox: " + title + " " + defString);
-			inputBox(title, defString, "OK");
+			String[] param = params.split(":@:", 3);
+			seqID = param[0];
+			if (param.length > 1 && param[1].length() > 0)
+				title = param[1];
+			if (param.length > 2)
+				defString = param[2];
+			Log.i(TAG, "Launching inputbox: #" + seqID + " " + title + " " + defString);
+			inputBox(seqID, title, defString, "OK");
 			return true;
 		} else if (command.equals("vibrate")) {
 			int milliseconds = -1;
@@ -1321,7 +1436,14 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 				mLocationHelper.stopLocationUpdates();
 			}
 		} else if (command.equals("camera_command")) {
-			if (params.equals("startVideo")) {
+			if (params.startsWith("startVideo")) {
+				Pattern pattern = Pattern.compile("startVideo_(\\d+)x(\\d+)");
+				Matcher matcher = pattern.matcher(params);
+				if (!matcher.matches())
+					return false;
+				int width = Integer.parseInt(matcher.group(1));
+				int height = Integer.parseInt(matcher.group(2));
+				mCameraHelper.setCameraSize(width, height);
 				if (mCameraHelper != null && !askForPermissions(permissionsForCamera, REQUEST_CODE_CAMERA_PERMISSION)) {
 					mCameraHelper.startCamera();
 				}
@@ -1336,10 +1458,6 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			} else {
 				// Only keep the screen bright ingame.
 				window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-			}
-		} else if (command.equals("event")) {
-			if (params.equals("exitgame")) {
-				mCameraHelper.stopCamera();
 			}
 		}
 		return false;

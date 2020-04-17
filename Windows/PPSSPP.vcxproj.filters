@@ -191,6 +191,9 @@
     <ClCompile Include="WASAPIStream.cpp">
       <Filter>Windows\System</Filter>
     </ClCompile>
+    <ClCompile Include="CaptureDevice.cpp">
+      <Filter>Windows\Input</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Debugger\CtrlDisAsmView.h">
@@ -353,6 +356,13 @@
     <ClInclude Include="WASAPIStream.h">
       <Filter>Windows\System</Filter>
     </ClInclude>
+    <ClInclude Include="..\ppsspp_config.h" />
+    <ClInclude Include="CaptureDevice.h">
+      <Filter>Windows\Input</Filter>
+    </ClInclude>
+    <ClInclude Include="BufferLock.h">
+      <Filter>Windows\Input</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="icon1.ico">
@@ -387,9 +397,6 @@
       <Filter>Other Platforms</Filter>
     </None>
     <None Include="..\atlasscript.txt">
-      <Filter>Other Platforms</Filter>
-    </None>
-    <None Include="..\atlasscript_lowmem.txt">
       <Filter>Other Platforms</Filter>
     </None>
     <None Include="..\ios\AudioEngine.mm">

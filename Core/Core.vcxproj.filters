@@ -336,9 +336,6 @@
     <ClCompile Include="Util\PPGeDraw.cpp">
       <Filter>Util</Filter>
     </ClCompile>
-    <ClCompile Include="Util\ppge_atlas.cpp">
-      <Filter>Util</Filter>
-    </ClCompile>
     <ClCompile Include="HLE\sceFont.cpp">
       <Filter>HLE\Libraries</Filter>
     </ClCompile>
@@ -740,6 +737,9 @@
     <ClCompile Include="HLE\sceUsbMic.cpp">
       <Filter>HLE\Libraries</Filter>
     </ClCompile>
+    <ClCompile Include="HW\Camera.cpp">
+      <Filter>HW</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ELF\ElfReader.h">
@@ -995,9 +995,6 @@
       <Filter>HW</Filter>
     </ClInclude>
     <ClInclude Include="Util\PPGeDraw.h">
-      <Filter>Util</Filter>
-    </ClInclude>
-    <ClInclude Include="Util\ppge_atlas.h">
       <Filter>Util</Filter>
     </ClInclude>
     <ClInclude Include="HLE\sceFont.h">
@@ -1372,6 +1369,9 @@
     </ClInclude>
     <ClInclude Include="HLE\sceUsbMic.h">
       <Filter>HLE\Libraries</Filter>
+    </ClInclude>
+    <ClInclude Include="HW\Camera.h">
+      <Filter>HW</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

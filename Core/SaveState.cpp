@@ -152,11 +152,12 @@ namespace SaveState
 
 		void ScheduleCompress(std::vector<u8> *result, const std::vector<u8> *state, const std::vector<u8> *base)
 		{
-			auto th = new std::thread([=]{
+			if (compressThread_.joinable())
+				compressThread_.join();
+			compressThread_ = std::thread([=]{
 				setCurrentThreadName("SaveStateCompress");
 				Compress(*result, *state, *base);
 			});
-			th->detach();
 		}
 
 		void Compress(std::vector<u8> &result, const std::vector<u8> &state, const std::vector<u8> &base)
@@ -207,6 +208,9 @@ namespace SaveState
 
 		void Clear()
 		{
+			if (compressThread_.joinable())
+				compressThread_.join();
+
 			// This lock is mainly for shutdown.
 			std::lock_guard<std::mutex> guard(lock_);
 			first_ = 0;
@@ -232,6 +236,7 @@ namespace SaveState
 		StateBuffer bases_[2];
 		std::vector<int> baseMapping_;
 		std::mutex lock_;
+		std::thread compressThread_;
 
 		int base_;
 		int baseUsage_;
@@ -376,7 +381,7 @@ namespace SaveState
 			return StringFromFormat("%s (%c)", title.c_str(), slotChar);
 		}
 		if (detectSlot(UNDO_STATE_EXTENSION)) {
-			I18NCategory *sy = GetI18NCategory("System");
+			auto sy = GetI18NCategory("System");
 			// Allow the number to be positioned where it makes sense.
 			std::string undo = sy->T("undo %c");
 			return title + " (" + StringFromFormat(undo.c_str(), slotChar) + ")";
@@ -397,7 +402,7 @@ namespace SaveState
 		}
 
 		// The file can't be loaded - let's note that.
-		I18NCategory *sy = GetI18NCategory("System");
+		auto sy = GetI18NCategory("System");
 		return File::GetFilename(filename) + " " + sy->T("(broken)");
 	}
 
@@ -432,7 +437,7 @@ namespace SaveState
 		if (!fn.empty()) {
 			Load(fn, callback, cbUserData);
 		} else {
-			I18NCategory *sy = GetI18NCategory("System");
+			auto sy = GetI18NCategory("System");
 			if (callback)
 				callback(Status::FAILURE, sy->T("Failed to load state. Error in the file system."), cbUserData);
 		}
@@ -489,7 +494,7 @@ namespace SaveState
 			SaveScreenshot(shot, Callback(), 0);
 			Save(fn + ".tmp", renameCallback, cbUserData);
 		} else {
-			I18NCategory *sy = GetI18NCategory("System");
+			auto sy = GetI18NCategory("System");
 			if (callback)
 				callback(Status::FAILURE, sy->T("Failed to save state. Error in the file system."), cbUserData);
 		}
@@ -630,9 +635,9 @@ namespace SaveState
 		// Okay, first, let's give the rewind state a shot - maybe we can at least not reset entirely.
 		// Even if this was a rewind, maybe we can still load a previous one.
 		CChunkFileReader::Error result;
-		do
+		do {
 			result = rewindStates.Restore();
-		while (result == CChunkFileReader::ERROR_BROKEN_STATE);
+		} while (result == CChunkFileReader::ERROR_BROKEN_STATE);
 
 		if (result == CChunkFileReader::ERROR_NONE) {
 			return true;
@@ -724,7 +729,7 @@ namespace SaveState
 			std::string reason;
 			std::string title;
 
-			I18NCategory *sc = GetI18NCategory("Screen");
+			auto sc = GetI18NCategory("Screen");
 			const char *i18nLoadFailure = sc->T("Load savestate failed", "");
 			const char *i18nSaveFailure = sc->T("Save State Failed", "");
 			if (strlen(i18nLoadFailure) == 0)

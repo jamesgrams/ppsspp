@@ -10,6 +10,7 @@
 #include <mutex>
 #include <thread>
 
+#include "base/display.h"
 #include "Common/Vulkan/VulkanContext.h"
 #include "math/dataconv.h"
 #include "math/math_util.h"
@@ -84,6 +85,10 @@ enum class VKRRunType {
 	SYNC,
 };
 
+enum {
+	MAX_TIMESTAMP_QUERIES = 128,
+};
+
 class VulkanRenderManager {
 public:
 	VulkanRenderManager(VulkanContext *vulkan);
@@ -119,6 +124,7 @@ public:
 	void SetViewport(const VkViewport &vp) {
 		_dbg_assert_(G3D, curRenderStep_ && curRenderStep_->stepType == VKRStepType::RENDER);
 		_dbg_assert_(G3D, (int)vp.width >= 0);
+		_dbg_assert_(G3D, (int)vp.height >= 0);
 		VkRenderData data{ VKRRenderCommand::VIEWPORT };
 		data.viewport.vp.x = vp.x;
 		data.viewport.vp.y = vp.y;
@@ -126,8 +132,9 @@ public:
 		data.viewport.vp.height = vp.height;
 		// We can't allow values outside this range unless we use VK_EXT_depth_range_unrestricted.
 		// Sometimes state mapping produces 65536/65535 which is slightly outside.
-		data.viewport.vp.maxDepth = clamp_value(vp.maxDepth, 0.0f, 1.0f);
+		// TODO: This should be fixed at the source.
 		data.viewport.vp.minDepth = clamp_value(vp.minDepth, 0.0f, 1.0f);
+		data.viewport.vp.maxDepth = clamp_value(vp.maxDepth, 0.0f, 1.0f);
 		curRenderStep_->commands.push_back(data);
 	}
 
@@ -149,10 +156,10 @@ public:
 		curRenderStep_->commands.push_back(data);
 	}
 
-	void SetBlendFactor(float color[4]) {
+	void SetBlendFactor(uint32_t color) {
 		_dbg_assert_(G3D, curRenderStep_ && curRenderStep_->stepType == VKRStepType::RENDER);
 		VkRenderData data{ VKRRenderCommand::BLEND };
-		CopyFloat4(data.blendColor.color, color);
+		data.blendColor.color = color;
 		curRenderStep_->commands.push_back(data);
 	}
 
@@ -233,6 +240,10 @@ public:
 		splitSubmit_ = split;
 	}
 
+	void SetInflightFrames(int f) {
+		newInflightFrames_ = f < 1 || f > VulkanContext::MAX_INFLIGHT_FRAMES ? VulkanContext::MAX_INFLIGHT_FRAMES : f;
+	}
+
 	VulkanContext *GetVulkanContext() {
 		return vulkan_;
 	}
@@ -243,7 +254,7 @@ public:
 	}
 
 	std::string GetGpuProfileString() const {
-		return frameData_[vulkan_->GetCurFrame()].profileSummary;
+		return frameData_[vulkan_->GetCurFrame()].profile.profileSummary;
 	}
 
 private:
@@ -290,17 +301,13 @@ private:
 		uint32_t curSwapchainImage = -1;
 
 		// Profiling.
-		VkQueryPool timestampQueryPool_ = VK_NULL_HANDLE;
+		QueueProfileContext profile;
 		bool profilingEnabled_;
-		std::vector<std::string> timestampDescriptions;
-		std::string profileSummary;
 	};
 
 	FrameData frameData_[VulkanContext::MAX_INFLIGHT_FRAMES];
-
-	enum {
-		MAX_TIMESTAMP_QUERIES = 256,
-	};
+	int newInflightFrames_ = -1;
+	int inflightFramesAtStart_ = 0;
 
 	// Submission time state
 	int curWidth_ = -1;

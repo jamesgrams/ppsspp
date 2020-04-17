@@ -14,7 +14,9 @@
 #include "base/logging.h"
 #include "DataFormat.h"
 
+namespace Lin {
 class Matrix4x4;
+}
 
 namespace Draw {
 
@@ -144,6 +146,7 @@ enum VertexShaderPreset : int {
 enum FragmentShaderPreset : int {
 	FS_COLOR_2D,
 	FS_TEXTURE_COLOR_2D,
+	FS_TEXTURE_COLOR_2D_RB_SWIZZLE,
 	FS_MAX_PRESET,
 };
 
@@ -661,11 +664,6 @@ public:
 	virtual void FlushState() {}
 
 protected:
-	struct FRect {
-		float x, y, w, h;
-	};
-	void RotateRectToDisplay(FRect &rect, float curRTWidth, float curRTHeight);
-
 	ShaderModule *vsPresets_[VS_MAX_PRESET];
 	ShaderModule *fsPresets_[FS_MAX_PRESET];
 

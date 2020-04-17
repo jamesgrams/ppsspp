@@ -46,6 +46,8 @@
 #include "Core/ConfigValues.h"
 #include "Core/Loaders.h"
 #include "Core/System.h"
+#include "Core/HLE/sceUsbCam.h"
+#include "Core/HLE/sceUsbGps.h"
 #include "Common/CPUDetect.h"
 #include "Common/Log.h"
 #include "UI/GameInfoCache.h"
@@ -101,8 +103,9 @@ static int deviceType;
 
 // Should only be used for display detection during startup (for config defaults etc)
 // This is the ACTUAL display size, not the hardware scaled display size.
-static int display_xres;
-static int display_yres;
+// Exposed so it can be displayed on the touchscreen test.
+int display_xres;
+int display_yres;
 static int display_dpi_x;
 static int display_dpi_y;
 static int backbuffer_format;	// Android PixelFormat enum
@@ -115,11 +118,17 @@ JavaVM* gJvm = nullptr;
 static jobject gClassLoader;
 static jmethodID gFindClassMethod;
 
+static float g_safeInsetLeft = 0.0;
+static float g_safeInsetRight = 0.0;
+static float g_safeInsetTop = 0.0;
+static float g_safeInsetBottom = 0.0;
 
 static jmethodID postCommand;
 static jobject nativeActivity;
 static volatile bool exitRenderLoop;
 static bool renderLoopRunning;
+static int inputBoxSequence = 1;
+std::map<int, std::function<void(bool, const std::string &)>> inputBoxCallbacks;
 
 static float dp_xscale = 1.0f;
 static float dp_yscale = 1.0f;
@@ -300,8 +309,23 @@ int System_GetPropertyInt(SystemProperty prop) {
 		return optimalSampleRate;
 	case SYSPROP_AUDIO_OPTIMAL_FRAMES_PER_BUFFER:
 		return optimalFramesPerBuffer;
+	default:
+		return -1;
+	}
+}
+
+float System_GetPropertyFloat(SystemProperty prop) {
+	switch (prop) {
 	case SYSPROP_DISPLAY_REFRESH_RATE:
-		return (int)(display_hz * 1000.0);
+		return display_hz;
+	case SYSPROP_DISPLAY_SAFE_INSET_LEFT:
+		return g_safeInsetLeft;
+	case SYSPROP_DISPLAY_SAFE_INSET_RIGHT:
+		return g_safeInsetRight;
+	case SYSPROP_DISPLAY_SAFE_INSET_TOP:
+		return g_safeInsetTop;
+	case SYSPROP_DISPLAY_SAFE_INSET_BOTTOM:
+		return g_safeInsetBottom;
 	default:
 		return -1;
 	}
@@ -506,7 +530,7 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_audioInit(JNIEnv *, jclass) {
 
 	ILOG("NativeApp.audioInit() -- Using OpenSL audio! frames/buffer: %i	 optimal sr: %i	 actual sr: %i", optimalFramesPerBuffer, optimalSampleRate, sampleRate);
 	if (!g_audioState) {
-		g_audioState = AndroidAudio_Init(&NativeMix, library_path, framesPerBuffer, sampleRate);
+		g_audioState = AndroidAudio_Init(&NativeMix, framesPerBuffer, sampleRate);
 	} else {
 		ELOG("Audio state already initialized");
 	}
@@ -562,6 +586,7 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_shutdown(JNIEnv *, jclass) {
 		ILOG("Not shutting down renderer - not initialized");
 	}
 
+	inputBoxCallbacks.clear();
 	NativeShutdown();
 	VFSShutdown();
 	while (frameCommands.size())
@@ -611,6 +636,31 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeRenderer_displayInit(JNIEnv * env, 
 	NativeMessageReceived("recreateviews", "");
 }
 
+static void recalculateDpi() {
+	g_dpi = display_dpi_x;
+	g_dpi_scale_x = 240.0f / display_dpi_x;
+	g_dpi_scale_y = 240.0f / display_dpi_y;
+	g_dpi_scale_real_x = g_dpi_scale_x;
+	g_dpi_scale_real_y = g_dpi_scale_y;
+
+	dp_xres = display_xres * g_dpi_scale_x;
+	dp_yres = display_yres * g_dpi_scale_y;
+
+	// Touch scaling is from display pixels to dp pixels.
+	// Wait, doesn't even make sense... this is equal to g_dpi_scale_x. TODO: Figure out what's going on!
+	dp_xscale = (float)dp_xres / (float)display_xres;
+	dp_yscale = (float)dp_yres / (float)display_yres;
+
+	pixel_in_dps_x = (float)pixel_xres / dp_xres;
+	pixel_in_dps_y = (float)pixel_yres / dp_yres;
+
+	ILOG("RecalcDPI: display_xres=%d display_yres=%d", display_xres, display_yres);
+	ILOG("RecalcDPI: g_dpi=%f g_dpi_scale_x=%f g_dpi_scale_y=%f", g_dpi, g_dpi_scale_x, g_dpi_scale_y);
+	ILOG("RecalcDPI: dp_xscale=%f dp_yscale=%f", dp_xscale, dp_yscale);
+	ILOG("RecalcDPI: dp_xres=%d dp_yres=%d", dp_xres, dp_yres);
+	ILOG("RecalcDPI: pixel_xres=%d pixel_yres=%d", pixel_xres, pixel_yres);
+}
+
 extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_backbufferResize(JNIEnv *, jclass, jint bufw, jint bufh, jint format) {
 	ILOG("NativeApp.backbufferResize(%d x %d)", bufw, bufh);
 
@@ -622,33 +672,49 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_backbufferResize(JNIEnv
 	pixel_yres = bufh;
 	backbuffer_format = format;
 
-	g_dpi = display_dpi_x;
-	g_dpi_scale_x = 240.0f / g_dpi;
-	g_dpi_scale_y = 240.0f / g_dpi;
-	g_dpi_scale_real_x = g_dpi_scale_x;
-	g_dpi_scale_real_y = g_dpi_scale_y;
-
-	dp_xres = display_xres * g_dpi_scale_x;
-	dp_yres = display_yres * g_dpi_scale_y;
-
-	// Touch scaling is from display pixels to dp pixels.
-	dp_xscale = (float)dp_xres / (float)display_xres;
-	dp_yscale = (float)dp_yres / (float)display_yres;
-
-	pixel_in_dps_x = (float)pixel_xres / dp_xres;
-	pixel_in_dps_y = (float)pixel_yres / dp_yres;
-
-	ILOG("g_dpi=%f g_dpi_scale_x=%f g_dpi_scale_y=%f", g_dpi, g_dpi_scale_x, g_dpi_scale_y);
-	ILOG("dp_xscale=%f dp_yscale=%f", dp_xscale, dp_yscale);
-	ILOG("dp_xres=%d dp_yres=%d", dp_xres, dp_yres);
-	ILOG("pixel_xres=%d pixel_yres=%d", pixel_xres, pixel_yres);
+	recalculateDpi();
 
 	if (new_size) {
 		ILOG("Size change detected (previously %d,%d) - calling NativeResized()", old_w, old_h);
 		NativeResized();
 	} else {
-		ILOG("NativeApp::backbufferReisze: Size didn't change.");
+		ILOG("NativeApp::backbufferResize: Size didn't change.");
 	}
+}
+
+void System_InputBoxGetString(const std::string &title, const std::string &defaultValue, std::function<void(bool, const std::string &)> cb) {
+	int seq = inputBoxSequence++;
+	inputBoxCallbacks[seq] = cb;
+
+	std::string serialized = StringFromFormat("%d:@:%s:@:%s", seq, title.c_str(), defaultValue.c_str());
+	System_SendMessage("inputbox", serialized.c_str());
+}
+
+extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendInputBox(JNIEnv *env, jclass, jstring jseqID, jboolean result, jstring jvalue) {
+	std::string seqID = GetJavaString(env, jseqID);
+	std::string value = GetJavaString(env, jvalue);
+
+	static std::string lastSeqID = "";
+	if (lastSeqID == seqID) {
+		// We send this on dismiss, so twice in many cases.
+		DLOG("Ignoring duplicate sendInputBox");
+		return;
+	}
+	lastSeqID = seqID;
+
+	int seq = 0;
+	if (!TryParse(seqID, &seq)) {
+		ELOG("Invalid inputbox seqID value: %s", seqID.c_str());
+		return;
+	}
+
+	auto entry = inputBoxCallbacks.find(seq);
+	if (entry == inputBoxCallbacks.end()) {
+		ELOG("Did not find inputbox callback for %s, shutdown?", seqID.c_str());
+		return;
+	}
+
+	NativeInputBoxReceived(entry->second, result, value);
 }
 
 void UpdateRunLoopAndroid(JNIEnv *env) {
@@ -673,7 +739,7 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeRenderer_displayRender(JNIEnv *env,
 		hasSetThreadName = true;
 		setCurrentThreadName("AndroidRender");
 	}
-	
+
 	if (useCPUThread) {
 		// This is the "GPU thread".
 		if (graphicsContext)
@@ -829,6 +895,16 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendMessage(JNIEnv *env
 		permissions[SYSTEM_PERMISSION_STORAGE] = PERMISSION_STATUS_GRANTED;
 	} else if (msg == "sustained_perf_supported") {
 		sustainedPerfSupported = true;
+	} else if (msg == "safe_insets") {
+		ILOG("Got insets: %s", prm.c_str());
+		// We don't bother with supporting exact rectangular regions. Safe insets are good enough.
+		int left, right, top, bottom;
+		if (4 == sscanf(prm.c_str(), "%d:%d:%d:%d", &left, &right, &top, &bottom)) {
+			g_safeInsetLeft = (float)left * g_dpi_scale_x;
+			g_safeInsetRight = (float)right * g_dpi_scale_x;
+			g_safeInsetTop = (float)top * g_dpi_scale_y;
+			g_safeInsetBottom = (float)bottom * g_dpi_scale_y;
+		}
 	}
 
 	// Ensures that the receiver can handle it on a sensible thread.
@@ -897,6 +973,9 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_setDisplayParameters(JN
 	display_dpi_x = dpi;
 	display_dpi_y = dpi;
 	display_hz = refreshRate;
+
+	recalculateDpi();
+	NativeResized();
 }
 
 extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_computeDesiredBackbufferDimensions() {
@@ -911,18 +990,50 @@ extern "C" jint JNICALL Java_org_ppsspp_ppsspp_NativeApp_getDesiredBackbufferHei
 	return desiredBackbufferSizeY;
 }
 
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_pushNewGpsData(JNIEnv *, jclass,
-		jfloat latitude, jfloat longitude, jfloat altitude, jfloat speed, jfloat bearing, jlong time) {
-	PushNewGpsData(latitude, longitude, altitude, speed, bearing, time);
+std::vector<std::string> __cameraGetDeviceList() {
+	jclass cameraClass = findClass("org/ppsspp/ppsspp/CameraHelper");
+	jmethodID deviceListMethod = getEnv()->GetStaticMethodID(cameraClass, "getDeviceList", "()Ljava/util/ArrayList;");
+	jobject deviceListObject = getEnv()->CallStaticObjectMethod(cameraClass, deviceListMethod);
+	jclass arrayListClass = getEnv()->FindClass("java/util/ArrayList");
+	jmethodID arrayListSize = getEnv()->GetMethodID(arrayListClass, "size", "()I");
+	jmethodID arrayListGet = getEnv()->GetMethodID(arrayListClass, "get", "(I)Ljava/lang/Object;");
+
+	jint arrayListObjectLen = getEnv()->CallIntMethod(deviceListObject, arrayListSize);
+	std::vector<std::string> deviceListVector;
+
+	for (int i=0; i < arrayListObjectLen; i++) {
+		jstring dev = static_cast<jstring>(getEnv()->CallObjectMethod(deviceListObject, arrayListGet, i));
+		const char* cdev = getEnv()->GetStringUTFChars(dev, nullptr);
+		deviceListVector.push_back(cdev);
+		getEnv()->ReleaseStringUTFChars(dev, cdev);
+		getEnv()->DeleteLocalRef(dev);
+	}
+	return deviceListVector;
 }
 
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_pushCameraImage(JNIEnv *env, jclass,
+extern "C" jint Java_org_ppsspp_ppsspp_NativeApp_getSelectedCamera(JNIEnv *, jclass) {
+	int cameraId = 0;
+	sscanf(g_Config.sCameraDevice.c_str(), "%d:", &cameraId);
+	return cameraId;
+}
+
+extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_setGpsDataAndroid(JNIEnv *, jclass,
+       jlong time, jfloat hdop, jfloat latitude, jfloat longitude, jfloat altitude, jfloat speed, jfloat bearing) {
+	GPS::setGpsData(time, hdop, latitude, longitude, altitude, speed, bearing);
+}
+
+extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_setSatInfoAndroid(JNIEnv *, jclass,
+	   jshort index, jshort id, jshort elevation, jshort azimuth, jshort snr, jshort good) {
+	GPS::setSatInfo(index, id, elevation, azimuth, snr, good);
+}
+
+extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_pushCameraImageAndroid(JNIEnv *env, jclass,
 		jbyteArray image) {
 
 	if (image != NULL) {
 		jlong size = env->GetArrayLength(image);
 		jbyte* buffer = env->GetByteArrayElements(image, NULL);
-		PushCameraImage(size, (unsigned char *)buffer);
+		Camera::pushCameraImage(size, (unsigned char *)buffer);
 		env->ReleaseByteArrayElements(image, buffer, JNI_ABORT);
 	}
 }
@@ -961,27 +1072,32 @@ extern "C" bool JNICALL Java_org_ppsspp_ppsspp_NativeActivity_runEGLRenderLoop(J
 		return false;
 	}
 
-retry:
-
-	bool vulkan = g_Config.iGPUBackend == (int)GPUBackend::VULKAN;
-
-	int tries = 0;
-
-	if (!graphicsContext->InitFromRenderThread(wnd, desiredBackbufferSizeX, desiredBackbufferSizeY, backbuffer_format, androidVersion)) {
-		ELOG("Failed to initialize graphics context.");
-
-		if (!exitRenderLoop && (vulkan && tries < 2)) {
-			ILOG("Trying again, this time with OpenGL.");
-			g_Config.iGPUBackend = (int)GPUBackend::OPENGL;
-			SetGPUBackend((GPUBackend)g_Config.iGPUBackend);
-			tries++;
-			goto retry;
+	auto tryInit = [&]() {
+		if (graphicsContext->InitFromRenderThread(wnd, desiredBackbufferSizeX, desiredBackbufferSizeY, backbuffer_format, androidVersion)) {
+			return true;
 		}
 
-		delete graphicsContext;
-		graphicsContext = nullptr;
-		renderLoopRunning = false;
+		ELOG("Failed to initialize graphics context.");
 		return false;
+	};
+
+	bool initSuccess = tryInit();
+	if (!initSuccess) {
+		if (!exitRenderLoop && g_Config.iGPUBackend == (int)GPUBackend::VULKAN) {
+			ILOG("Trying again, this time with OpenGL.");
+			SetGPUBackend(GPUBackend::OPENGL);
+			g_Config.iGPUBackend = (int)GetGPUBackend();
+
+			// If we were still supporting EGL for GL, we'd retry here:
+			//initSuccess = tryInit();
+		}
+
+		if (!initSuccess) {
+			delete graphicsContext;
+			graphicsContext = nullptr;
+			renderLoopRunning = false;
+			return false;
+		}
 	}
 
 	if (!exitRenderLoop) {

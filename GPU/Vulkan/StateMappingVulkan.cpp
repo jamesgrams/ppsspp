@@ -131,7 +131,7 @@ void DrawEngineVulkan::ResetShaderBlending() {
 void DrawEngineVulkan::ConvertStateToVulkanKey(FramebufferManagerVulkan &fbManager, ShaderManagerVulkan *shaderManager, int prim, VulkanPipelineRasterStateKey &key, VulkanDynamicState &dynState) {
 	key.topology = primToVulkan[prim];
 
-	bool useBufferedRendering = g_Config.iRenderingMode != FB_NON_BUFFERED_MODE;
+	bool useBufferedRendering = framebufferManager_->UseBufferedRendering();
 
 	if (gstate_c.IsDirty(DIRTY_BLEND_STATE)) {
 		gstate_c.SetAllowShaderBlend(!g_Config.bDisableSlowFramebufEffects);
@@ -172,6 +172,8 @@ void DrawEngineVulkan::ConvertStateToVulkanKey(FramebufferManagerVulkan &fbManag
 					// Until next time, force it off.
 					ResetShaderBlending();
 					gstate_c.SetAllowShaderBlend(false);
+					// Make sure we recompute the fragment shader ID to one that doesn't try to use shader blending.
+					gstate_c.Dirty(DIRTY_FRAGMENTSHADER_STATE);
 				}
 			} else if (blendState.resetShaderBlending) {
 				ResetShaderBlending();
@@ -413,8 +415,6 @@ void DrawEngineVulkan::ApplyDrawStateLate(VulkanRenderManager *renderManager, bo
 		renderManager->SetStencilParams(dynState_.stencilWriteMask, dynState_.stencilCompareMask, applyStencilRef ? stencilRef : dynState_.stencilRef);
 	}
 	if (gstate_c.IsDirty(DIRTY_BLEND_STATE) && useBlendConstant) {
-		float bc[4];
-		Uint8x4ToFloat4(bc, dynState_.blendColor);
-		renderManager->SetBlendFactor(bc);
+		renderManager->SetBlendFactor(dynState_.blendColor);
 	}
 }

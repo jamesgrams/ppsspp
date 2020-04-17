@@ -144,8 +144,13 @@ void PSPDialog::DoState(PointerWrap &p)
 	p.Do(isFading);
 	p.Do(fadeIn);
 	p.Do(fadeValue);
+
+	// I don't think we should save these two... Let's just ignore them for now for compat.
+	int okButtonImg = 0;
 	p.Do(okButtonImg);
+	int cancelButtonImg = 0;
 	p.Do(cancelButtonImg);
+
 	p.Do(okButtonFlag);
 	p.Do(cancelButtonFlag);
 
@@ -202,7 +207,7 @@ void PSPDialog::DisplayButtons(int flags, const char *caption)
 		truncate_cpy(safeCaption, caption);
 	}
 
-	I18NCategory *di = GetI18NCategory("Dialog");
+	auto di = GetI18NCategory("Dialog");
 	float x1 = 183.5f, x2 = 261.5f;
 	if (GetCommonParam()->buttonSwap == 1) {
 		x1 = 261.5f;

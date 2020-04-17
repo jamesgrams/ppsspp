@@ -44,13 +44,17 @@ struct FormatBuffer {
 	inline u32 Get32(int x, int y, int stride) {
 		return as32[x + y * stride];
 	}
+
+	inline u16 *Get16Ptr(int x, int y, int stride) {
+		return &as16[x + y * stride];
+	}
 };
 
 class SoftwareDrawEngine;
 
 class SoftGPU : public GPUCommon {
 public:
-	SoftGPU(GraphicsContext *gfxCtx, Draw::DrawContext *_thin3D);
+	SoftGPU(GraphicsContext *gfxCtx, Draw::DrawContext *draw);
 	~SoftGPU();
 
 	void CheckGPUFeatures() override {}
@@ -58,7 +62,7 @@ public:
 	void ExecuteOp(u32 op, u32 diff) override;
 
 	void SetDisplayFramebuffer(u32 framebuf, u32 stride, GEBufferFormat format) override;
-	void CopyDisplayToOutput() override;
+	void CopyDisplayToOutput(bool reallyDirty) override;
 	void GetStats(char *buffer, size_t bufsize) override;
 	void InvalidateCache(u32 addr, int size, GPUInvalidationType type) override;
 	void NotifyVideoUpload(u32 addr, int size, int width, int format) override;
@@ -97,6 +101,7 @@ public:
 protected:
 	void FastRunLoop(DisplayList &list) override;
 	void CopyToCurrentFboFromDisplayRam(int srcwidth, int srcheight);
+	void ConvertTextureDescFrom16(Draw::TextureDesc &desc, int srcwidth, int srcheight);
 
 private:
 	bool framebufferDirty_;
@@ -108,7 +113,8 @@ private:
 
 	Draw::Texture *fbTex;
 	Draw::Pipeline *texColor;
-	std::vector<u32> fbTexBuffer;
+	Draw::Pipeline *texColorRBSwizzle;
+	std::vector<u32> fbTexBuffer_;
 
 	Draw::SamplerState *samplerNearest = nullptr;
 	Draw::SamplerState *samplerLinear = nullptr;

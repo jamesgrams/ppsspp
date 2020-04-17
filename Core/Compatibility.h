@@ -59,7 +59,6 @@ struct CompatFlags {
 	bool DisableAccurateDepth;
 	bool MGS2AcidHack;
 	bool SonicRivalsHack;
-	bool RenderPassMerge;
 	bool BlockTransferAllowCreateFB;
 	bool YugiohSaveFix;
 	bool ForceUMDDelay;
@@ -67,6 +66,8 @@ struct CompatFlags {
 	bool JitInvalidationHack;
 	bool HideISOFiles;
 	bool MoreAccurateVMMUL;
+	bool ForceSoftwareRenderer;
+	bool DarkStalkersPresentHack;
 };
 
 class IniFile;

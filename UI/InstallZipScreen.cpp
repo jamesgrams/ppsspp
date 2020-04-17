@@ -20,7 +20,6 @@
 #include "ui/ui.h"
 #include "ui/view.h"
 #include "ui/viewgroup.h"
-#include "UI/ui_atlas.h"
 #include "file/file_util.h"
 
 #include "Common/StringUtils.h"
@@ -34,8 +33,8 @@ void InstallZipScreen::CreateViews() {
 	FileInfo fileInfo;
 	bool success = getFileInfo(zipPath_.c_str(), &fileInfo);
 
-	I18NCategory *di = GetI18NCategory("Dialog");
-	I18NCategory *iz = GetI18NCategory("InstallZip");
+	auto di = GetI18NCategory("Dialog");
+	auto iz = GetI18NCategory("InstallZip");
 
 	Margins actionMenuMargins(0, 100, 15, 0);
 
@@ -106,16 +105,19 @@ UI::EventReturn InstallZipScreen::OnInstall(UI::EventParams &params) {
 }
 
 void InstallZipScreen::update() {
-	I18NCategory *iz = GetI18NCategory("InstallZip");
+	auto iz = GetI18NCategory("InstallZip");
 
 	using namespace UI;
 	if (g_GameManager.GetState() != GameManagerState::IDLE) {
-		progressBar_->SetVisibility(V_VISIBLE);
-		progressBar_->SetProgress(g_GameManager.GetCurrentInstallProgressPercentage());
+		if (progressBar_) {
+			progressBar_->SetVisibility(V_VISIBLE);
+			progressBar_->SetProgress(g_GameManager.GetCurrentInstallProgressPercentage());
+		}
 		backChoice_->SetEnabled(false);
 	} else {
-		if (progressBar_)
+		if (progressBar_) {
 			progressBar_->SetVisibility(V_GONE);
+		}
 		backChoice_->SetEnabled(true);
 		std::string err = g_GameManager.GetInstallError();
 		if (!err.empty()) {

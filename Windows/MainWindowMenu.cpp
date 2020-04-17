@@ -125,7 +125,7 @@ namespace MainWindow {
 	}
 
 	void CreateHelpMenu(HMENU menu) {
-		I18NCategory *des = GetI18NCategory("DesktopUI");
+		auto des = GetI18NCategory("DesktopUI");
 
 		const std::wstring visitMainWebsite = ConvertUTF8ToWString(des->T("www.ppsspp.org"));
 		const std::wstring visitForum = ConvertUTF8ToWString(des->T("PPSSPP Forums"));
@@ -171,7 +171,7 @@ namespace MainWindow {
 			return false;
 		}
 
-		I18NCategory *ps = GetI18NCategory("PostShaders");
+		auto ps = GetI18NCategory("PostShaders");
 
 		HMENU shaderMenu = GetSubmenuById(menu, ID_OPTIONS_SHADER_MENU);
 		EmptySubMenu(shaderMenu);
@@ -202,7 +202,7 @@ namespace MainWindow {
 	}
 
 	static void TranslateMenuItem(const HMENU hMenu, const int menuID, const std::wstring& accelerator = L"", const char *key = nullptr) {
-		I18NCategory *des = GetI18NCategory("DesktopUI");
+		auto des = GetI18NCategory("DesktopUI");
 
 		std::wstring translated;
 		if (key == nullptr || !strcmp(key, "")) {
@@ -329,6 +329,7 @@ namespace MainWindow {
 		TranslateMenuItem(menu, ID_OPTIONS_SHOWFPS);
 		TranslateMenuItem(menu, ID_EMULATION_SOUND);
 		TranslateMenuItem(menu, ID_EMULATION_CHEATS, L"\tCtrl+T");
+		TranslateMenuItem(menu, ID_EMULATION_CHAT, L"\tCtrl+C");
 
 		// Help menu: it's translated in CreateHelpMenu.
 		CreateHelpMenu(menu);
@@ -474,7 +475,7 @@ namespace MainWindow {
 	}
 
 	static void setRenderingMode(int mode) {
-		I18NCategory *gr = GetI18NCategory("Graphics");
+		auto gr = GetI18NCategory("Graphics");
 
 		g_Config.iRenderingMode = mode;
 		switch (g_Config.iRenderingMode) {
@@ -499,7 +500,7 @@ namespace MainWindow {
 				g_Config.iFrameSkip = FRAMESKIP_OFF;
 		}
 
-		I18NCategory *gr = GetI18NCategory("Graphics");
+		auto gr = GetI18NCategory("Graphics");
 
 		std::ostringstream messageStream;
 		messageStream << gr->T("Frame Skipping") << ":" << " ";
@@ -519,7 +520,7 @@ namespace MainWindow {
 			g_Config.iFrameSkipType = 0;
 		}
 
-		I18NCategory *gr = GetI18NCategory("Graphics");
+		auto gr = GetI18NCategory("Graphics");
 
 		std::ostringstream messageStream;
 		messageStream << gr->T("Frame Skipping Type") << ":" << " ";
@@ -553,7 +554,7 @@ namespace MainWindow {
 	void MainWindowMenu_Process(HWND hWnd, WPARAM wParam) {
 		std::string fn;
 
-		I18NCategory *gr = GetI18NCategory("Graphics");
+		auto gr = GetI18NCategory("Graphics");
 
 		int wmId = LOWORD(wParam);
 		int wmEvent = HIWORD(wParam);
@@ -628,7 +629,11 @@ namespace MainWindow {
 			g_Config.bEnableCheats = !g_Config.bEnableCheats;
 			osm.ShowOnOff(gr->T("Cheats"), g_Config.bEnableCheats);
 			break;
-
+		case ID_EMULATION_CHAT:
+			if (GetUIState() == UISTATE_INGAME) {
+				NativeMessageReceived("chat screen", "");
+			}
+			break;
 		case ID_FILE_LOADSTATEFILE:
 			if (W32Util::BrowseForFileName(true, hWnd, L"Load state", 0, L"Save States (*.ppst)\0*.ppst\0All files\0*.*\0\0", L"ppst", fn)) {
 				SetCursor(LoadCursor(0, IDC_WAIT));
@@ -739,6 +744,7 @@ namespace MainWindow {
 
 		case ID_OPTIONS_VSYNC:
 			g_Config.bVSync = !g_Config.bVSync;
+			NativeResized();
 			break;
 
 		case ID_OPTIONS_FRAMESKIP_AUTO:
@@ -798,6 +804,7 @@ namespace MainWindow {
 
 		case ID_OPTIONS_HARDWARETRANSFORM:
 			g_Config.bHardwareTransform = !g_Config.bHardwareTransform;
+			NativeMessageReceived("gpu_resized", "");
 			osm.ShowOnOff(gr->T("Hardware Transform"), g_Config.bHardwareTransform);
 			break;
 

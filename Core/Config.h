@@ -27,6 +27,17 @@
 
 extern const char *PPSSPP_GIT_VERSION;
 
+enum ChatPositions {
+	BOTTOM_LEFT = 0,
+	BOTTOM_CENTER = 1,
+	BOTOM_RIGHT = 2,
+	TOP_LEFT = 3,
+	TOP_CENTER = 4,
+	TOP_RIGHT = 5,
+	CENTER_LEFT = 6,
+	CENTER_RIGHT = 7,
+};
+
 namespace http {
 	class Download;
 	class Downloader;
@@ -97,7 +108,6 @@ public:
 	uint32_t uJitDisableFlags;
 
 	bool bSeparateSASThread;
-	bool bSeparateIOThread;
 	int iIOTimingMethod;
 	int iLockedCPUSpeed;
 	bool bAutoSaveSymbolMap;
@@ -129,6 +139,7 @@ public:
 	// If not set, will use the "best" device.
 	std::string sVulkanDevice;
 	std::string sD3D11Device;  // Windows only
+	std::string sCameraDevice;
 
 	bool bSoftwareRendering;
 	bool bHardwareTransform; // only used in the GLES backend
@@ -150,6 +161,11 @@ public:
 	bool bAutoFrameSkip;
 	bool bFrameSkipUnthrottle;
 
+	bool bEnableCardboardVR; // Cardboard Master Switch
+	int iCardboardScreenSize; // Screen Size (in %)
+	int iCardboardXShift; // X-Shift of Screen (in %)
+	int iCardboardYShift; // Y-Shift of Screen (in %)
+
 	int iWindowX;
 	int iWindowY;
 	int iWindowWidth;  // Windows and other windowed environments
@@ -170,6 +186,7 @@ public:
 	int iTexScalingLevel; // 0 = auto, 1 = off, 2 = 2x, ..., 5 = 5x
 	int iTexScalingType; // 0 = xBRZ, 1 = Hybrid
 	bool bTexDeposterize;
+	bool bTexHardwareScaling;
 	int iFpsLimit1;
 	int iFpsLimit2;
 	int iMaxRecent;
@@ -180,6 +197,7 @@ public:
 	bool bEnableCheats;
 	bool bReloadCheats;
 	int iCwCheatRefreshRate;
+	float fCwCheatScrollPosition;
 	int iBloomHack; //0 = off, 1 = safe, 2 = balanced, 3 = aggressive
 	bool bBlockTransferGPU;
 	bool bDisableSlowFramebufEffects;
@@ -189,18 +207,24 @@ public:
 	std::string sPostShaderName;  // Off for off.
 	bool bGfxDebugOutput;
 	bool bGfxDebugSplitSubmit;
+	int iInflightFrames;
+	bool bRenderDuplicateFrames;
 
 	// Sound
 	bool bEnableSound;
-	int iAudioLatency; // 0 = low , 1 = medium(default) , 2 = high
 	int iAudioBackend;
 	int iGlobalVolume;
 	int iAltSpeedVolume;
 	bool bExtraAudioBuffering;  // For bluetooth
+	std::string sAudioDevice;
+	bool bAutoAudioDevice;
 
 	// UI
 	bool bShowDebuggerOnLoad;
 	int iShowFPSCounter;
+	bool bShowRegionOnGameIcon;
+	bool bShowIDOnGameIcon;
+	float fGameGridScale;
 
 	// TODO: Maybe move to a separate theme system.
 	uint32_t uItemStyleFg;
@@ -250,6 +274,8 @@ public:
 	int iTiltSensitivityY;
 	//the deadzone radius of the tilt
 	float fDeadzoneRadius;
+	// deadzone skip
+	float fTiltDeadzoneSkip;
 	//type of tilt input currently selected: Defined in TiltEventProcessor.h
 	//0 - no tilt, 1 - analog stick, 2 - D-Pad, 3 - Action Buttons (Tri, Cross, Square, Circle)
 	int iTiltInputType;
@@ -268,6 +294,13 @@ public:
 	int iTouchButtonStyle;
 	int iTouchButtonOpacity;
 	int iTouchButtonHideSeconds;
+	// Auto rotation speed
+	float fAnalogAutoRotSpeed;
+
+	// Snap touch control position
+	bool bTouchSnapToGrid;
+	int iTouchSnapGridSize;
+
 	// Floating analog stick (recenters on thumb on press).
 	bool bAutoCenterTouchAnalog;
 
@@ -295,6 +328,9 @@ public:
 	ConfigTouchPos touchCombo4;
 	ConfigTouchPos touchSpeed1Key;
 	ConfigTouchPos touchSpeed2Key;
+	ConfigTouchPos touchRapidFireKey;
+	ConfigTouchPos touchAnalogRotationCWKey;
+	ConfigTouchPos touchAnalogRotationCCWKey;
 
 	// Controls Visibility
 	bool bShowTouchControls;
@@ -310,6 +346,12 @@ public:
 	int iCombokey2;
 	int iCombokey3;
 	int iCombokey4;
+
+	bool bComboToggle0;
+	bool bComboToggle1;
+	bool bComboToggle2;
+	bool bComboToggle3;
+	bool bComboToggle4;
 
 	// Ignored on iOS and other platforms that lack pause.
 	bool bShowTouchPause;
@@ -361,10 +403,20 @@ public:
 	bool bEnableAdhocServer;
 	int iWlanAdhocChannel;
 	bool bWlanPowerSave;
+	bool bEnableNetworkChat;
+	//for chat position , moveable buttons is better than this 
+	int iChatButtonPosition;
+	int iChatScreenPosition;
+
+	bool bEnableQuickChat;
+	std::string sQuickChat0;
+	std::string sQuickChat1;
+	std::string sQuickChat2;
+	std::string sQuickChat3;
+	std::string sQuickChat4;
 
 	int iPSPModel;
 	int iFirmwareVersion;
-	// TODO: Make this work with your platform, too!
 	bool bBypassOSKWithKeyboard;
 
 	// Debugger
@@ -387,6 +439,7 @@ public:
 	// Double edged sword: much easier debugging, but not accurate.
 	bool bSkipDeadbeefFilling;
 	bool bFuncHashMap;
+	bool bDrawFrameGraph;
 
 	// Volatile development settings
 	bool bShowFrameProfiler;
@@ -406,6 +459,7 @@ public:
 
 	void Load(const char *iniFileName = nullptr, const char *controllerIniFilename = nullptr);
 	void Save(const char *saveReason);
+	void Reload();
 	void RestoreDefaults();
 
 	//per game config managment, should maybe be in it's own class
@@ -444,6 +498,7 @@ protected:
 	void LoadStandardControllerIni();
 
 private:
+	bool reload_ = false;
 	std::string gameId_;
 	std::string gameIdTitle_;
 	std::string iniFilename_;

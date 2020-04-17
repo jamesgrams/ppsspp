@@ -2,8 +2,11 @@
 
 #include <set>
 
+#include "math/lin/vec3.h"
 #include "ui/screen.h"
 #include "ui/viewgroup.h"
+
+using namespace Lin;
 
 class I18NCategory;
 namespace Draw {
@@ -41,17 +44,15 @@ protected:
 
 	virtual void RecreateViews() override { recreateViews_ = true; }
 
-	UI::ViewGroup *root_;
-	Vec3 translation_;
-	Vec3 scale_;
+	UI::ViewGroup *root_ = nullptr;
+	Vec3 translation_ = Vec3(0.0f);
+	Vec3 scale_ = Vec3(1.0f);
 	float alpha_ = 1.0f;
 
 private:
 	void DoRecreateViews();
 
-	bool recreateViews_;
-
-	int hatDown_;
+	bool recreateViews_ = true;
 };
 
 class UIDialogScreen : public UIScreen {

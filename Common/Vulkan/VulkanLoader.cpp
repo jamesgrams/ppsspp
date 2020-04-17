@@ -176,6 +176,9 @@ PFN_vkCreateAndroidSurfaceKHR vkCreateAndroidSurfaceKHR;
 #elif defined(_WIN32)
 PFN_vkCreateWin32SurfaceKHR vkCreateWin32SurfaceKHR;
 #endif
+#if defined(VK_USE_PLATFORM_METAL_EXT)
+PFN_vkCreateMetalSurfaceEXT vkCreateMetalSurfaceEXT;
+#endif
 #if defined(VK_USE_PLATFORM_XLIB_KHR)
 PFN_vkCreateXlibSurfaceKHR vkCreateXlibSurfaceKHR;
 #endif
@@ -220,6 +223,7 @@ static HINSTANCE vulkanLibrary;
 #else
 static void *vulkanLibrary;
 #endif
+const char *VulkanResultToString(VkResult res);
 
 bool g_vulkanAvailabilityChecked = false;
 bool g_vulkanMayBeAvailable = false;
@@ -232,12 +236,17 @@ bool g_vulkanMayBeAvailable = false;
 
 static const char *device_name_blacklist[] = {
 	"NVIDIA:SHIELD Tablet K1",
+	"SDL:Horizon",
 };
 
 static const char *so_names[] = {
+#if defined(__APPLE__)
+	"libMoltenVK.dylib",
+#else
 	"libvulkan.so",
 #if !defined(__ANDROID__)
 	"libvulkan.so.1",
+#endif
 #endif
 };
 
@@ -309,6 +318,8 @@ bool VulkanMayBeAvailable() {
 	const char * const platformSurfaceExtension = VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
 #elif defined(__ANDROID__)
 	const char *platformSurfaceExtension = VK_KHR_ANDROID_SURFACE_EXTENSION_NAME;
+#elif defined(VK_USE_PLATFORM_METAL_EXT)
+	const char * const platformSurfaceExtension = VK_EXT_METAL_SURFACE_EXTENSION_NAME;
 #else
 	const char *platformSurfaceExtension = 0;
 #endif
@@ -322,7 +333,7 @@ bool VulkanMayBeAvailable() {
 	res = localEnumerateInstanceExtensionProperties(nullptr, &instanceExtCount, nullptr);
 	// Maximum paranoia.
 	if (res != VK_SUCCESS) {
-		ELOG("Enumerating VK extensions failed.");
+		ELOG("Enumerating VK extensions failed (%s)", VulkanResultToString(res));
 		goto bail;
 	}
 	if (instanceExtCount == 0) {
@@ -333,7 +344,7 @@ bool VulkanMayBeAvailable() {
 	instanceExts.resize(instanceExtCount);
 	res = localEnumerateInstanceExtensionProperties(nullptr, &instanceExtCount, instanceExts.data());
 	if (res != VK_SUCCESS) {
-		ELOG("Enumerating VK extensions failed.");
+		ELOG("Enumerating VK extensions failed (%s)", VulkanResultToString(res));
 		goto bail;
 	}
 	for (auto iter : instanceExts) {
@@ -379,13 +390,13 @@ bool VulkanMayBeAvailable() {
 	res = localCreateInstance(&ci, nullptr, &instance);
 	if (res != VK_SUCCESS) {
 		instance = nullptr;
-		ELOG("Failed to create vulkan instance.");
+		ELOG("VulkanMayBeAvailable: Failed to create vulkan instance (%s)", VulkanResultToString(res));
 		goto bail;
 	}
 	ILOG("VulkanMayBeAvailable: Vulkan test instance created successfully.");
 	res = localEnumerate(instance, &physicalDeviceCount, nullptr);
 	if (res != VK_SUCCESS) {
-		ELOG("VulkanMayBeAvailable: Failed to count physical devices.");
+		ELOG("VulkanMayBeAvailable: Failed to count physical devices (%s)", VulkanResultToString(res));
 		goto bail;
 	}
 	if (physicalDeviceCount == 0) {
@@ -395,7 +406,7 @@ bool VulkanMayBeAvailable() {
 	devices.resize(physicalDeviceCount);
 	res = localEnumerate(instance, &physicalDeviceCount, devices.data());
 	if (res != VK_SUCCESS) {
-		ELOG("VulkanMayBeAvailable: Failed to enumerate physical devices.");
+		ELOG("VulkanMayBeAvailable: Failed to enumerate physical devices (%s)", VulkanResultToString(res));
 		goto bail;
 	}
 	anyGood = false;
@@ -514,6 +525,8 @@ void VulkanLoadInstanceFunctions(VkInstance instance, const VulkanDeviceExtensio
 	LOAD_INSTANCE_FUNC(instance, vkCreateWin32SurfaceKHR);
 #elif defined(__ANDROID__)
 	LOAD_INSTANCE_FUNC(instance, vkCreateAndroidSurfaceKHR);
+#elif defined(VK_USE_PLATFORM_METAL_EXT)
+	LOAD_INSTANCE_FUNC(instance, vkCreateMetalSurfaceEXT);
 #endif
 #if defined(VK_USE_PLATFORM_XLIB_KHR)
 	LOAD_INSTANCE_FUNC(instance, vkCreateXlibSurfaceKHR);

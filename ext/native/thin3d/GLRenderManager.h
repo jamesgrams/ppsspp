@@ -232,6 +232,10 @@ public:
 	void Map();
 	void Unmap();
 
+	bool IsReady() const {
+		return writePtr_ != nullptr;
+	}
+
 	// When using the returned memory, make sure to bind the returned vkbuf.
 	// This will later allow for handling overflow correctly.
 	size_t Allocate(size_t numBytes, GLRBuffer **vkbuf) {
@@ -521,13 +525,11 @@ public:
 	}
 
 	// Takes ownership over the data pointer and delete[]-s it.
-	void TextureImage(GLRTexture *texture, int level, int width, int height, GLenum internalFormat, GLenum format, GLenum type, uint8_t *data, GLRAllocType allocType = GLRAllocType::NEW, bool linearFilter = false) {
+	void TextureImage(GLRTexture *texture, int level, int width, int height, Draw::DataFormat format, uint8_t *data, GLRAllocType allocType = GLRAllocType::NEW, bool linearFilter = false) {
 		GLRInitStep step{ GLRInitStepType::TEXTURE_IMAGE };
 		step.texture_image.texture = texture;
 		step.texture_image.data = data;
-		step.texture_image.internalFormat = internalFormat;
 		step.texture_image.format = format;
-		step.texture_image.type = type;
 		step.texture_image.level = level;
 		step.texture_image.width = width;
 		step.texture_image.height = height;
@@ -536,13 +538,12 @@ public:
 		initSteps_.push_back(step);
 	}
 
-	void TextureSubImage(GLRTexture *texture, int level, int x, int y, int width, int height, GLenum format, GLenum type, uint8_t *data, GLRAllocType allocType = GLRAllocType::NEW) {
+	void TextureSubImage(GLRTexture *texture, int level, int x, int y, int width, int height, Draw::DataFormat format, uint8_t *data, GLRAllocType allocType = GLRAllocType::NEW) {
 		_dbg_assert_(G3D, curRenderStep_ && curRenderStep_->stepType == GLRStepType::RENDER);
 		GLRRenderData _data{ GLRRenderCommand::TEXTURE_SUBIMAGE };
 		_data.texture_subimage.texture = texture;
 		_data.texture_subimage.data = data;
 		_data.texture_subimage.format = format;
-		_data.texture_subimage.type = type;
 		_data.texture_subimage.level = level;
 		_data.texture_subimage.x = x;
 		_data.texture_subimage.y = y;
@@ -861,6 +862,10 @@ public:
 
 	enum { MAX_INFLIGHT_FRAMES = 3 };
 
+	void SetInflightFrames(int f) {
+		newInflightFrames_ = f < 1 || f > MAX_INFLIGHT_FRAMES ? MAX_INFLIGHT_FRAMES : f;
+	}
+
 	int GetCurFrame() const {
 		return curFrame_;
 	}
@@ -986,6 +991,9 @@ private:
 	std::function<void()> swapFunction_;
 	std::function<void(int)> swapIntervalFunction_;
 	GLBufferStrategy bufferStrategy_ = GLBufferStrategy::SUBDATA;
+
+	int inflightFrames_ = MAX_INFLIGHT_FRAMES;
+	int newInflightFrames_ = -1;
 
 	int swapInterval_ = 0;
 	bool swapIntervalChanged_ = true;

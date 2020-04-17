@@ -280,7 +280,7 @@ const std::string PSPSaveDialog::GetSelectedSaveDirName() const
 
 void PSPSaveDialog::DisplayBanner(int which)
 {
-	I18NCategory *di = GetI18NCategory("Dialog");
+	auto di = GetI18NCategory("Dialog");
 	PPGeDrawRect(0, 0, 480, 23, CalcFadedColor(0x65636358));
 	const char *title;
 	switch (which)
@@ -394,7 +394,7 @@ void PSPSaveDialog::DisplaySaveDataInfo1()
 {
 	std::lock_guard<std::mutex> guard(paramLock);
 	if (param.GetFileInfo(currentSelectedSave).size == 0) {
-		I18NCategory *di = GetI18NCategory("Dialog");
+		auto di = GetI18NCategory("Dialog");
 		PPGeDrawText(di->T("NEW DATA"), 180, 136, PPGE_ALIGN_VCENTER, 0.6f, CalcFadedColor(0xFFFFFFFF));
 	} else {
 		char title[512];
@@ -534,12 +534,11 @@ void PSPSaveDialog::DisplayMessage(std::string text, bool hasYesNo)
 {
 	const float WRAP_WIDTH = 254.0f;
 	float y = 136.0f, h;
-	int n;
-	PPGeMeasureText(0, &h, &n, text.c_str(), FONT_SCALE, PPGE_LINE_WRAP_WORD, WRAP_WIDTH);
-	float h2 = h * (float)n / 2.0f;
+	PPGeMeasureText(nullptr, &h, text.c_str(), FONT_SCALE, PPGE_LINE_WRAP_WORD, WRAP_WIDTH);
+	float h2 = h / 2.0f;
 	if (hasYesNo)
 	{
-		I18NCategory *di = GetI18NCategory("Dialog");
+		auto di = GetI18NCategory("Dialog");
 		const char *choiceText;
 		u32 yesColor, noColor;
 		float x, w;
@@ -555,7 +554,7 @@ void PSPSaveDialog::DisplayMessage(std::string text, bool hasYesNo)
 			yesColor = 0xFFFFFFFF;
 			noColor  = 0xFFFFFFFF;
 		}
-		PPGeMeasureText(&w, &h, 0, choiceText, FONT_SCALE);
+		PPGeMeasureText(&w, &h, choiceText, FONT_SCALE);
 		w = w / 2.0f + 5.5f;
 		h /= 2.0f;
 		float y2 = y + h2 + 4.0f;
@@ -610,18 +609,18 @@ int PSPSaveDialog::Update(int animSpeed)
 	UpdateButtons();
 	UpdateFade(animSpeed);
 
-	okButtonImg = I_CIRCLE;
-	cancelButtonImg = I_CROSS;
+	okButtonImg = ImageID("I_CIRCLE");
+	cancelButtonImg = ImageID("I_CROSS");
 	okButtonFlag = CTRL_CIRCLE;
 	cancelButtonFlag = CTRL_CROSS;
 	if (param.GetPspParam()->common.buttonSwap == 1) {
-		okButtonImg = I_CROSS;
-		cancelButtonImg = I_CIRCLE;
+		okButtonImg = ImageID("I_CROSS");
+		cancelButtonImg = ImageID("I_CIRCLE");
 		okButtonFlag = CTRL_CROSS;
 		cancelButtonFlag = CTRL_CIRCLE;
 	}
 
-	I18NCategory *di = GetI18NCategory("Dialog");
+	auto di = GetI18NCategory("Dialog");
 
 	switch (display)
 	{

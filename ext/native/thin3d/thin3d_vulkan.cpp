@@ -429,30 +429,6 @@ public:
 
 	void FlushState() override {}
 
-	// From Sascha's code
-	static std::string FormatDriverVersion(const VkPhysicalDeviceProperties &props) {
-		if (props.vendorID == VULKAN_VENDOR_NVIDIA) {
-			// 10 bits = major version (up to r1023)
-			// 8 bits = minor version (up to 255)
-			// 8 bits = secondary branch version/build version (up to 255)
-			// 6 bits = tertiary branch/build version (up to 63)
-			uint32_t major = (props.driverVersion >> 22) & 0x3ff;
-			uint32_t minor = (props.driverVersion >> 14) & 0x0ff;
-			uint32_t secondaryBranch = (props.driverVersion >> 6) & 0x0ff;
-			uint32_t tertiaryBranch = (props.driverVersion) & 0x003f;
-			return StringFromFormat("%d.%d.%d.%d (%08x)", major, minor, secondaryBranch, tertiaryBranch, props.driverVersion);
-		} else if (props.vendorID == VULKAN_VENDOR_ARM) {
-			// ARM just puts a hash here, let's just output it as is.
-			return StringFromFormat("%08x", props.driverVersion);
-		} else {
-			// Standard scheme, use the standard macros.
-			uint32_t major = VK_VERSION_MAJOR(props.driverVersion);
-			uint32_t minor = VK_VERSION_MINOR(props.driverVersion);
-			uint32_t branch = VK_VERSION_PATCH(props.driverVersion);
-			return StringFromFormat("%d.%d.%d (%08x)", major, minor, branch, props.driverVersion);
-		}
-	}
-
 	std::string GetInfoString(InfoField info) const override {
 		// TODO: Make these actually query the right information
 		switch (info) {
@@ -589,6 +565,8 @@ VkFormat DataFormatToVulkan(DataFormat format) {
 	case DataFormat::R8G8B8_UNORM: return VK_FORMAT_R8G8B8_UNORM;
 	case DataFormat::R8G8B8A8_UNORM: return VK_FORMAT_R8G8B8A8_UNORM;
 	case DataFormat::R4G4_UNORM_PACK8: return VK_FORMAT_R4G4_UNORM_PACK8;
+
+	// Note: A4R4G4B4_UNORM_PACK16 is not supported.
 	case DataFormat::R4G4B4A4_UNORM_PACK16: return VK_FORMAT_R4G4B4A4_UNORM_PACK16;
 	case DataFormat::B4G4R4A4_UNORM_PACK16: return VK_FORMAT_B4G4R4A4_UNORM_PACK16;
 	case DataFormat::R5G5B5A1_UNORM_PACK16: return VK_FORMAT_R5G5B5A1_UNORM_PACK16;
@@ -596,6 +574,7 @@ VkFormat DataFormatToVulkan(DataFormat format) {
 	case DataFormat::R5G6B5_UNORM_PACK16: return VK_FORMAT_R5G6B5_UNORM_PACK16;
 	case DataFormat::B5G6R5_UNORM_PACK16: return VK_FORMAT_B5G6R5_UNORM_PACK16;
 	case DataFormat::A1R5G5B5_UNORM_PACK16: return VK_FORMAT_A1R5G5B5_UNORM_PACK16;
+
 	case DataFormat::R32_FLOAT: return VK_FORMAT_R32_SFLOAT;
 	case DataFormat::R32G32_FLOAT: return VK_FORMAT_R32G32_SFLOAT;
 	case DataFormat::R32G32B32_FLOAT: return VK_FORMAT_R32G32B32_SFLOAT;
@@ -723,6 +702,7 @@ bool VKTexture::Create(VkCommandBuffer cmd, VulkanPushBuffer *push, const Textur
 		// Gonna have to generate some, which requires TRANSFER_SRC
 		usageBits |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 	}
+
 	if (!vkTex_->CreateDirect(cmd, alloc, width_, height_, mipLevels_, vulkanFormat, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, usageBits)) {
 		ELOG("Failed to create VulkanTexture: %dx%dx%d fmt %d, %d levels", width_, height_, depth_, (int)vulkanFormat, mipLevels_);
 		return false;
@@ -763,7 +743,7 @@ VKContext::VKContext(VulkanContext *vulkan, bool splitSubmit)
 	caps_.framebufferDepthCopySupported = true;   // Will pretty much always be the case.
 	caps_.preferredDepthBufferFormat = DataFormat::D24_S8;  // TODO: Ask vulkan.
 
-	auto deviceProps = vulkan->GetPhysicalDeviceProperties(vulkan_->GetCurrentPhysicalDevice()).properties;
+	auto deviceProps = vulkan->GetPhysicalDeviceProperties(vulkan_->GetCurrentPhysicalDeviceIndex()).properties;
 	switch (deviceProps.vendorID) {
 	case VULKAN_VENDOR_AMD: caps_.vendor = GPUVendor::VENDOR_AMD; break;
 	case VULKAN_VENDOR_ARM: caps_.vendor = GPUVendor::VENDOR_ARM; break;
@@ -936,36 +916,47 @@ VkDescriptorSet VKContext::GetOrCreateDescriptorSet(VkBuffer buf) {
 	bufferDesc.range = curPipeline_->GetUBOSize();
 
 	VkDescriptorImageInfo imageDesc;
-	imageDesc.imageView = boundTextures_[0] ? boundTextures_[0]->GetImageView() : VK_NULL_HANDLE;
-	imageDesc.sampler = boundSamplers_[0] ? boundSamplers_[0]->GetSampler() : VK_NULL_HANDLE;
-#ifdef VULKAN_USE_GENERAL_LAYOUT_FOR_COLOR
-	imageDesc.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-#else
-	imageDesc.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-#endif
 
 	VkWriteDescriptorSet writes[2] = {};
-	writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-	writes[0].dstSet = descSet;
-	writes[0].dstArrayElement = 0;
-	writes[0].dstBinding = 0;
-	writes[0].pBufferInfo = &bufferDesc;
-	writes[0].pImageInfo = nullptr;
-	writes[0].pTexelBufferView = nullptr;
-	writes[0].descriptorCount = 1;
-	writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
 
-	writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-	writes[1].dstSet = descSet;
-	writes[1].dstArrayElement = 0;
-	writes[1].dstBinding = 1;
-	writes[1].pBufferInfo = nullptr;
-	writes[1].pImageInfo = &imageDesc;
-	writes[1].pTexelBufferView = nullptr;
-	writes[1].descriptorCount = 1;
-	writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	// If handles are NULL for whatever buggy reason, it's best to leave the descriptors
+	// unwritten instead of trying to write a zero, which is not legal.
 
-	vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
+	int numWrites = 0;
+	if (buf) {
+		writes[numWrites].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[numWrites].dstSet = descSet;
+		writes[numWrites].dstArrayElement = 0;
+		writes[numWrites].dstBinding = 0;
+		writes[numWrites].pBufferInfo = &bufferDesc;
+		writes[numWrites].pImageInfo = nullptr;
+		writes[numWrites].pTexelBufferView = nullptr;
+		writes[numWrites].descriptorCount = 1;
+		writes[numWrites].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+		numWrites++;
+	}
+
+	if (boundTextures_[0] && boundTextures_[0]->GetImageView() && boundSamplers_[0] && boundSamplers_[0]->GetSampler()) {
+		imageDesc.imageView = boundTextures_[0] ? boundTextures_[0]->GetImageView() : VK_NULL_HANDLE;
+		imageDesc.sampler = boundSamplers_[0] ? boundSamplers_[0]->GetSampler() : VK_NULL_HANDLE;
+#ifdef VULKAN_USE_GENERAL_LAYOUT_FOR_COLOR
+		imageDesc.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+#else
+		imageDesc.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+#endif
+		writes[numWrites].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[numWrites].dstSet = descSet;
+		writes[numWrites].dstArrayElement = 0;
+		writes[numWrites].dstBinding = 1;
+		writes[numWrites].pBufferInfo = nullptr;
+		writes[numWrites].pImageInfo = &imageDesc;
+		writes[numWrites].pTexelBufferView = nullptr;
+		writes[numWrites].descriptorCount = 1;
+		writes[numWrites].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		numWrites++;
+	}
+
+	vkUpdateDescriptorSets(device_, numWrites, writes, 0, nullptr);
 
 	frame->descSets_[key] = descSet;
 	return descSet;
@@ -1059,13 +1050,7 @@ Pipeline *VKContext::CreateGraphicsPipeline(const PipelineDesc &desc) {
 }
 
 void VKContext::SetScissorRect(int left, int top, int width, int height) {
-	FRect rc{ (float)left, (float)top, (float)width, (float)height };
-	if (curFramebuffer_ == nullptr) { // Only the backbuffer is actually rotated wrong!
-		int curRTWidth, curRTHeight;
-		GetFramebufferDimensions((Framebuffer *)curFramebuffer_, &curRTWidth, &curRTHeight);
-		RotateRectToDisplay(rc, (float)curRTWidth, (float)curRTHeight);
-	}
-	VkRect2D scissor{ {(int32_t)rc.x, (int32_t)rc.y}, {(uint32_t)rc.w, (uint32_t)rc.h} };
+	VkRect2D scissor{ {(int32_t)left, (int32_t)top}, {(uint32_t)width, (uint32_t)height} };
 	renderManager_.SetScissor(scissor);
 }
 
@@ -1073,16 +1058,10 @@ void VKContext::SetViewports(int count, Viewport *viewports) {
 	if (count > 0) {
 		// Ignore viewports more than the first.
 		VkViewport viewport;
-		FRect rc{ viewports[0].TopLeftX , viewports[0].TopLeftY, viewports[0].Width, viewports[0].Height };
-		if (curFramebuffer_ == nullptr) { // Only the backbuffer is actually rotated wrong!
-			int curRTWidth, curRTHeight;
-			GetFramebufferDimensions((Framebuffer *)curFramebuffer_, &curRTWidth, &curRTHeight);
-			RotateRectToDisplay(rc, (float)curRTWidth, (float)curRTHeight);
-		}
-		viewport.x = rc.x;
-		viewport.y = rc.y;
-		viewport.width = rc.w;
-		viewport.height = rc.h;
+		viewport.x = viewports[0].TopLeftX;
+		viewport.y = viewports[0].TopLeftY;
+		viewport.width = viewports[0].Width;
+		viewport.height = viewports[0].Height;
 		viewport.minDepth = viewports[0].MinDepth;
 		viewport.maxDepth = viewports[0].MaxDepth;
 		renderManager_.SetViewport(viewport);
@@ -1090,7 +1069,8 @@ void VKContext::SetViewports(int count, Viewport *viewports) {
 }
 
 void VKContext::SetBlendFactor(float color[4]) {
-	renderManager_.SetBlendFactor(color);
+	uint32_t col = Float4ToUint8x4(color);
+	renderManager_.SetBlendFactor(col);
 }
 
 void VKContext::SetStencilRef(uint8_t stencilRef) {
@@ -1369,39 +1349,23 @@ std::vector<std::string> VKContext::GetExtensionList() const {
 }
 
 uint32_t VKContext::GetDataFormatSupport(DataFormat fmt) const {
-	// TODO: Actually do proper checks
-	switch (fmt) {
-	case DataFormat::B8G8R8A8_UNORM:
-		return FMT_RENDERTARGET | FMT_TEXTURE;
-	case DataFormat::B4G4R4A4_UNORM_PACK16:
-		// This is the one that's guaranteed to be supported.
-		// A four-component, 16-bit packed unsigned normalized format that has a 4-bit B component in bits 12..15, a 4-bit
-		// G component in bits 8..11, a 4 - bit R component in bits 4..7, and a 4 - bit A component in bits 0..3
-		return FMT_RENDERTARGET | FMT_TEXTURE;
-	case DataFormat::R4G4B4A4_UNORM_PACK16:
-		return 0;
-	case DataFormat::A4R4G4B4_UNORM_PACK16:
-		return 0;
-
-	case DataFormat::R8G8B8A8_UNORM:
-		return FMT_RENDERTARGET | FMT_TEXTURE | FMT_INPUTLAYOUT;
-
-	case DataFormat::R32_FLOAT:
-	case DataFormat::R32G32_FLOAT:
-	case DataFormat::R32G32B32_FLOAT:
-	case DataFormat::R32G32B32A32_FLOAT:
-		return FMT_INPUTLAYOUT;
-
-	case DataFormat::R8_UNORM:
-		return FMT_TEXTURE;
-
-	case DataFormat::BC1_RGBA_UNORM_BLOCK:
-	case DataFormat::BC2_UNORM_BLOCK:
-	case DataFormat::BC3_UNORM_BLOCK:
-		return FMT_TEXTURE;
-	default:
-		return 0;
+	VkFormat vulkan_format = DataFormatToVulkan(fmt);
+	VkFormatProperties properties;
+	vkGetPhysicalDeviceFormatProperties(vulkan_->GetCurrentPhysicalDevice(), vulkan_format, &properties);
+	uint32_t flags = 0;
+	if (properties.optimalTilingFeatures & VkFormatFeatureFlagBits::VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) {
+		flags |= FMT_RENDERTARGET;
 	}
+	if (properties.optimalTilingFeatures & VkFormatFeatureFlagBits::VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+		flags |= FMT_DEPTHSTENCIL;
+	}
+	if (properties.optimalTilingFeatures & VkFormatFeatureFlagBits::VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) {
+		flags |= FMT_TEXTURE;
+	}
+	if (properties.bufferFeatures & VkFormatFeatureFlagBits::VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) {
+		flags |= FMT_INPUTLAYOUT;
+	}
+	return flags;
 }
 
 // A VKFramebuffer is a VkFramebuffer (note caps difference) plus all the textures it owns.
